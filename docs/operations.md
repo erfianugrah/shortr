@@ -1,8 +1,10 @@
 # shortr — operations
 
-Live URL: <https://s.erfi.io>
-Fly internal: <https://shortr-erfi.fly.dev>
+Live URL: <https://shortr-erfi.fly.dev>
 GitHub: <https://github.com/erfianugrah/shortr>
+
+> Custom-domain branding (`s.erfi.io` or similar) is blocked by a structural
+> Fly+Knot DNS issue — see `AGENTS.md` "Public hostname" section.
 
 ## Deployment topology
 
@@ -14,7 +16,7 @@ GitHub: <https://github.com/erfianugrah/shortr>
 | Volume | `shortr_data` (1 GB initial, 14-day snapshot retention) |
 | IPv4 (shared) | `66.241.124.26` |
 | IPv6 (dedicated) | `2a09:8280:1::11c:f064:0` |
-| TLS | Fly-managed Let's Encrypt for `s.erfi.io` |
+| TLS | Fly-managed Let's Encrypt for `shortr-erfi.fly.dev` (automatic) |
 | DNS | Knot DNS authoritative (`knot-fly-mvp` on Fly) — managed via `knotctl` |
 
 ## Day-2 operations
@@ -96,20 +98,25 @@ flyctl deploy --remote-only --app shortr-erfi
 
 ### DNS changes
 
-Records live on the user's Knot DNS at `knot-fly-mvp`. `knotctl` from `~/knot-fly/`:
+None needed currently — the live URL is the `.fly.dev` hostname, which Fly
+manages automatically.
+
+When the off-Fly secondary NS is added to erfi.io (see `AGENTS.md` for why),
+the path to claim `s.erfi.io` will be:
 
 ```bash
-# show current
-~/knot-fly/knotctl ls s.erfi.io
-~/knot-fly/knotctl ls _acme-challenge.s.erfi.io
-
-# repoint to a different Fly app (CNAME pattern — see AGENTS.md for why)
-~/knot-fly/knotctl set s.erfi.io CNAME <new-app>.fly.dev.
+~/knot-fly/knotctl add s.erfi.io CNAME shortr-erfi.fly.dev.
+flyctl certs add s.erfi.io --app shortr-erfi
+# wait ~5 min, then verify:
+flyctl certs check s.erfi.io --app shortr-erfi
+# update PUBLIC_BASE_URL:
+flyctl secrets set --app shortr-erfi PUBLIC_BASE_URL=https://s.erfi.io
 ```
 
-**Never** use A/AAAA records for erfi.io subdomains backed by Fly apps. The CNAME is load-bearing — Fly's cert verifier can't resolve our anycast Knot, so we route validation through the `.fly.dev` zone. Full explanation in `AGENTS.md`.
-
-If you ever migrate the Fly app (e.g. rename), `knotctl set s.erfi.io CNAME <new-app>.fly.dev.` then tear down the old app once cache TTL (300s here) expires.
+A records for erfi.io subdomains backed by Fly apps will not work as long
+as Fly's resolver can't reach our anycast Knot. The CNAME pattern is
+required because it routes Fly's resolver into its own `.fly.dev` zone
+(which it can resolve).
 
 ## DR drills
 

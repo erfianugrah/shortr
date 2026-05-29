@@ -104,23 +104,46 @@ flyctl deploy --image ghcr.io/USER/shortr:<git-sha>
 
 CI does this on tag push to `v*` — see `.github/workflows/deploy.yml`.
 
-## DNS pattern — CNAME, not A/AAAA
+## Public hostname — shortr-erfi.fly.dev, not s.erfi.io
 
-`s.erfi.io` MUST be a CNAME to `shortr-erfi.fly.dev`, NOT A+AAAA records pointing at Fly's anycast IPs. Why:
+The live URL is `https://shortr-erfi.fly.dev` (Fly-managed cert, no custom
+domain). We tried `s.erfi.io` and ran into a structural Fly limitation:
 
-- `erfi.io` is served by Knot on Fly anycast (`knot-fly-mvp`, IP `169.155.56.21`).
-- Fly's internal resolver hairpins when it tries to chase `ns1.erfi.io` (also `169.155.56.21`) — anycast loops the query back to itself.
-- Result: Fly's cert verifier sees no records for any erfi.io subdomain and the cert sits at `Awaiting configuration` forever.
-- With a CNAME, Fly follows the chain into its own `.fly.dev` zone (which it can resolve), gets A/AAAA from there, and validates via HTTP-01 instead of DNS-01.
+- `erfi.io` is served by Knot on Fly anycast (`knot-fly-mvp`, `169.155.56.21`).
+- Fly's internal resolver hairpins when it tries to chase `ns1.erfi.io` /
+  `ns2.erfi.io` (also `169.155.56.21`) — anycast loops the query back to itself.
+- Result: Fly's cert verifier sees `dns_records.{a,aaaa,cname,ownership_txt}=[]`
+  with `soa="a0.nic.io"` (the .io TLD, not erfi.io's actual SOA). Verifier
+  is structurally unable to resolve ANYTHING under erfi.io.
+- Neither A+AAAA records, nor a CNAME into `.fly.dev`, nor `_fly-ownership`
+  TXT, nor `_acme-challenge` CNAME unblocks this. Fly's resolver can't read
+  any of them.
 
-If you ever need to repoint the short URL to a different Fly app or another host:
-```bash
-~/knot-fly/knotctl set s.erfi.io CNAME <new-target>.fly.dev.
-```
+`ntfy.erfi.io` (also on Fly) is in the `Issued` state — but that cert was
+issued before the Knot-on-Fly DNS migration. New certs for erfi.io subdomains
+are blocked until the structural issue is fixed.
 
-The `_acme-challenge.s.erfi.io` CNAME (pointing to Fly's `<id>.flydns.net`) belongs to the cert, not the site — it stays put as long as the cert is owned by the same Fly app.
+### The two real fixes (deferred)
 
-The permanent fix (off-Fly secondary NS via he.net so Fly's resolver always has a non-hairpinned NS to fall back to) is on the `knot-dns` skill backlog. Until that lands, every Fly app on erfi.io uses the CNAME pattern.
+1. **Off-Fly secondary NS for erfi.io** (the proper fix). Sign up for
+   Hurricane Electric's free DNS secondary (https://dns.he.net), point its
+   AXFR-in at `knot-fly-mvp`'s public IP, add `ns3.he.net` to the erfi.io
+   delegation at the Namecheap registrar. Fly's resolver then falls back
+   to he.net's anycast NSes (not on Fly fabric) and can resolve normally.
+   Unblocks `s.erfi.io`, `gloryhole.erfi.io`, and any future erfi.io subdomain.
+2. **Use a zone Fly's resolver can reach.** `erfi.dev` is delegated to CF's
+   nameservers, which work fine. `s.erfi.dev` would issue today.
+
+Neither is needed for shortr to function. Park decision: stay on
+`shortr-erfi.fly.dev` until the off-Fly secondary lands as part of the
+`knot-dns` skill backlog.
+
+### When you change the URL
+
+Update three places:
+- `PUBLIC_BASE_URL` secret: `flyctl secrets set --app shortr-erfi PUBLIC_BASE_URL=https://<new>`
+- This `AGENTS.md` block + `README.md` + `docs/operations.md`
+- The local `.env.shortr-erfi.local` (operator copy of the token + URL)
 
 ## Disaster recovery
 

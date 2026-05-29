@@ -4,10 +4,17 @@ Self-hosted URL shortener. Single Go binary on Fly.io. Plain SQLite on a
 Fly volume with daily snapshot retention. Astro 6 dashboard embedded in
 the binary.
 
+Live: <https://shortr-erfi.fly.dev>
+
 ```
-GET https://s.example.com/abc       → 302 to https://news.ycombinator.com/...
-GET https://s.example.com/          → admin dashboard (bearer token required)
+GET https://shortr-erfi.fly.dev/abc   → 302 to https://news.ycombinator.com/...
+GET https://shortr-erfi.fly.dev/      → admin dashboard (bearer token required)
 ```
+
+> Why not `s.erfi.io`? Fly's internal resolver can't reach erfi.io's
+> Knot-on-Fly-anycast nameservers (hairpin loop). New certs for any
+> erfi.io subdomain are blocked until an off-Fly secondary NS is added.
+> See `AGENTS.md` — "Public hostname" section.
 
 ## What it does
 
@@ -56,21 +63,12 @@ make dev               # runs Go server on :8080 + Astro dev on :4321
 flyctl apps create shortr-erfi
 flyctl secrets set --app shortr-erfi \
   ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  PUBLIC_BASE_URL="https://s.erfi.io"
-
-# DNS — using knotctl against the user's Knot DNS server
-knotctl add s.erfi.io A    <ipv4>   # paste from `flyctl ips list -a shortr-erfi`
-knotctl add s.erfi.io AAAA <ipv6>   # ditto
-
-# cert
-flyctl certs add s.erfi.io --app shortr-erfi
-# wait ~5 min for issuance, then:
-flyctl certs check s.erfi.io --app shortr-erfi
+  PUBLIC_BASE_URL="https://shortr-erfi.fly.dev"
 
 # deploy
 git tag v0.1.0 && git push --tags    # CI deploys on tag
 # OR manual:
-flyctl deploy --config deploy/fly.toml --remote-only
+flyctl deploy --remote-only
 ```
 
 ### Disaster recovery

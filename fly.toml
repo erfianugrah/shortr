@@ -6,18 +6,19 @@
 # Manual one-time setup:
 #   flyctl apps create shortr-erfi
 #   flyctl secrets set --app shortr-erfi ADMIN_TOKEN=$(openssl rand -hex 32)
-#   flyctl secrets set --app shortr-erfi PUBLIC_BASE_URL=https://s.erfi.io
-#   flyctl ips list --app shortr-erfi        # copy IPs into knotctl
-#   flyctl certs add s.erfi.io --app shortr-erfi
+#   flyctl secrets set --app shortr-erfi PUBLIC_BASE_URL=https://shortr-erfi.fly.dev
+#
+# Public hostname is shortr-erfi.fly.dev (Fly-managed cert, no custom
+# domain). erfi.io subdomains are blocked by Fly's resolver hairpinning
+# on the anycast Knot NSes — see AGENTS.md "DNS pattern" section for the
+# full story. To unblock branded URLs in the future: add an off-Fly
+# secondary NS to erfi.io (he.net free), then `flyctl certs add s.erfi.io`.
 #
 # Disaster recovery: Fly takes a daily snapshot of the volume mounted at
 # /data and retains them per snapshot_retention below. Restore with
 # `flyctl volumes snapshots list -a shortr-erfi` then
 # `flyctl volumes create --snapshot-id <id> --region fra shortr_data`.
 # For a pre-risky-change snapshot use `make backup` from the repo root.
-#
-# Public hostname is s.erfi.io; "shortr-erfi" is just the Fly app slug
-# (the unsuffixed "shortr" was already claimed globally).
 
 app            = "shortr-erfi"
 primary_region = "fra"
