@@ -4,14 +4,17 @@
 # (knot-fly-mvp, glory-hole) for co-located latency.
 #
 # Manual one-time setup:
-#   flyctl apps create shortr
-#   flyctl storage create shortr-litestream  # sets BUCKET_*, AWS_* secrets
-#   flyctl secrets set --app shortr ADMIN_TOKEN=$(openssl rand -hex 32)
-#   flyctl secrets set --app shortr PUBLIC_BASE_URL=https://s.erfi.io
-#   flyctl ips list --app shortr             # copy IPs into knotctl
-#   flyctl certs add s.erfi.io --app shortr
+#   flyctl apps create shortr-erfi
+#   flyctl storage create shortr-litestream --app shortr-erfi
+#   flyctl secrets set --app shortr-erfi ADMIN_TOKEN=$(openssl rand -hex 32)
+#   flyctl secrets set --app shortr-erfi PUBLIC_BASE_URL=https://s.erfi.io
+#   flyctl ips list --app shortr-erfi        # copy IPs into knotctl
+#   flyctl certs add s.erfi.io --app shortr-erfi
+#
+# Public hostname is s.erfi.io; "shortr-erfi" is just the Fly app slug
+# (the unsuffixed "shortr" was already claimed globally).
 
-app            = "shortr"
+app            = "shortr-erfi"
 primary_region = "fra"
 
 [build]
