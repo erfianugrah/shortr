@@ -18,43 +18,51 @@ GET https://shortr-erfi.fly.dev/      → admin dashboard (bearer token required
 
 ## What it does
 
-- Creates short links with auto-generated 8-char slugs or custom slugs.
-- Optional expiry (timestamp), max click count, password protection.
-- Click analytics: timestamp, country (via Fly headers), referrer, UA, hashed IP.
-- Single bearer token auth (`ADMIN_TOKEN`).
-- Prometheus metrics at `/metrics`. JSON slog with request-ID correlation.
-- Continuous backup of the SQLite file to S3-compatible storage via Litestream.
+- **Create** short links with auto-generated 8-char slugs or custom slugs.
+- **Expiry**: optional `expires_at` timestamp — link returns 410 Gone after.
+- **Click caps**: optional `max_clicks` — link returns 410 Gone when exhausted.
+- **Password protection**: bcrypt hash; redirect path takes `?password=...`.
+- **Analytics**: per-link click count, recent events (country / Fly region /
+  referrer / UA / hashed IP), daily aggregation for sparkline.
+- **Admin dashboard**: dense table with copy / view-clicks / edit / delete,
+  inline create form with optional fields, right-side edit sheet, click
+  drawer with inline SVG sparkline.
+- **Single bearer token auth** (`ADMIN_TOKEN`). Easy to swap for OAuth.
+- **Prometheus metrics** at `/metrics`. JSON `slog` with request-ID correlation.
 
 ## Stack
 
 | Layer | Choice |
 |---|---|
-| Runtime | Go 1.26+, single static binary, multi-stage Docker |
+| Runtime | Go 1.25+, single static binary, multi-stage Docker |
 | HTTP | chi v5 + stdlib net/http |
 | Storage | SQLite via modernc.org/sqlite (pure Go, no CGO) |
 | Migrations | goose, SQL files embedded via `//go:embed` |
-| Queries | sqlc-generated, type-safe |
+| Queries | **sqlc** — `internal/storage/queries/*.sql` → `sqlitegen/` |
 | Backup | Fly volume daily snapshots (14-day retention) |
-| Dashboard | Astro 6 + React (islands) + Tailwind 4 + shadcn/ui + zod 4 + tanstack-form |
-| Lint/format | biome (web), go vet + staticcheck (Go) |
-| Hosting | Fly.io single region, auto-stop machines |
-| DNS | Knot DNS via knotctl (`s.<your-zone>` A/AAAA records) |
-| TLS | Fly-managed Let's Encrypt |
-| CI | GitHub Actions: lint → test → build → push ghcr.io → fly deploy on tag |
+| Dashboard | Astro 6 + React 19 (islands) + Tailwind 4 + shadcn-ui v4 + zod 4 |
+| UI primitives | button, input, label, table, dialog, sheet, sonner, badge, separator, dropdown-menu, select, form |
+| Lint/format | biome (web), go vet + race tests (Go) |
+| Hosting | Fly.io single region (`fra`), auto-stop machines |
+| TLS | Fly-managed Let's Encrypt for `shortr-erfi.fly.dev` (automatic) |
+| CI | GitHub Actions: lint → test → build on PRs; `flyctl deploy` on tag |
 
 ## Quick start (local)
 
 ```bash
-# 1. clone + install deps
 git clone https://github.com/erfianugrah/shortr ~/shortr
 cd ~/shortr
 make setup-web         # bun install in web/
 
-# 2. dev loop
-cp .env.example .env   # edit ADMIN_TOKEN, etc.
-make migrate-up        # creates ./shortr.db
-make dev               # runs Go server on :8080 + Astro dev on :4321
+cp .env.example .env
+# edit .env: ADMIN_TOKEN=$(openssl rand -hex 32)
+
+make migrate-up        # create ./shortr.db
+make dev               # Go server on :8080 + Astro dev on :4321
 ```
+
+The dev script proxies `/api/*` from Astro :4321 to Go :8080 so the dashboard
+hot-reloads while the API stays consistent.
 
 ## Deploy to Fly
 
@@ -63,22 +71,24 @@ make dev               # runs Go server on :8080 + Astro dev on :4321
 flyctl apps create shortr-erfi
 flyctl secrets set --app shortr-erfi \
   ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  PUBLIC_BASE_URL="https://shortr-erfi.fly.dev"
+  PUBLIC_BASE_URL="https://shortr-erfi.fly.dev" \
+  IP_HASH_SALT="$(openssl rand -hex 16)"
 
 # deploy
-git tag v0.1.0 && git push --tags    # CI deploys on tag
+git tag -a v0.2.0 -m "release notes"
+git push --tags         # CI deploys on tag
 # OR manual:
 flyctl deploy --remote-only
 ```
 
 ### Disaster recovery
 
-Fly takes a daily snapshot of the `/data` volume; retention is set to 14
-days in `deploy/fly.toml`. Take a manual snapshot before risky changes:
+Fly takes a daily snapshot of the `/data` volume; retention is 14 days in
+`fly.toml`. Take a manual snapshot before risky changes:
 
 ```bash
-make backup        # snapshot the prod volume
-make snapshots     # list snapshots
+make backup            # snapshot the prod volume
+make snapshots         # list snapshots
 # restore: flyctl volumes create --snapshot-id <id> --region fra shortr_data
 ```
 
@@ -86,9 +96,9 @@ make snapshots     # list snapshots
 
 ```bash
 make dev               # local dev (Go + Astro)
-make test              # go test ./...
+make test              # go test -race -count=1 ./...
 make lint              # biome check + go vet
-make sqlc              # regenerate Go from migrations/*.sql
+make sqlc              # regenerate Go from internal/storage/queries/*.sql
 make migrate-up        # apply migrations to ./shortr.db
 make migrate-down      # roll back one migration
 make build             # web-build → go build → bin/shortr
@@ -96,15 +106,16 @@ make build             # web-build → go build → bin/shortr
 
 ## Project structure
 
-See `AGENTS.md` for the bounded-context architecture and the rules around
-the redirect hot path.
+See [`AGENTS.md`](./AGENTS.md) for the bounded-context architecture, the
+rules around the redirect hot path, the sqlc workflow, and the worked
+"add a new field" example.
 
 ## Why these choices?
 
 - **Single Fly region**, not multi-region: a URL shortener's traffic is
-  one HTTP click per user-action. ~80-280ms worst-case latency from a
+  one HTTP click per user-action. ~80–280 ms worst-case latency from a
   single well-placed region is fine. Multi-region adds primary election +
-  fly-replay middleware + per-region volumes for ~150ms savings most users
+  fly-replay middleware + per-region volumes for ~150 ms savings most users
   never notice.
 - **Plain SQLite + volume snapshots**, not Litestream: Fly's daily
   snapshots are free, built-in, and recover anything you'd care about for
@@ -113,9 +124,16 @@ the redirect hot path.
   requirement.
 - **Pure-Go SQLite (modernc.org/sqlite)**, not CGO: simpler Dockerfile,
   faster builds on Fly, cross-compiles cleanly. Perf is fine for this load.
+- **sqlc-generated queries**, not an ORM: SQL files are the single source
+  of truth; Go calls are typed and compile-checked. No reflection, no
+  runtime overhead, no leaky abstraction.
 - **Embedded Astro frontend**, not separate Pages app: one binary, one TLS
   cert, one deploy step. The dashboard is small enough that islands +
   embedded `dist/` is the simplest thing that works.
+
+## Versioning
+
+Releases are tagged `vMAJOR.MINOR.PATCH`. See [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Operations
 
