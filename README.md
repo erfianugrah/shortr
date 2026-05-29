@@ -119,6 +119,12 @@ the redirect hot path.
   cert, one deploy step. The dashboard is small enough that islands +
   embedded `dist/` is the simplest thing that works.
 
+## Operations
+
+See [docs/operations.md](./docs/operations.md) for the deployed-topology
+reference, day-2 commands (logs, ssh, snapshots, secret rotation,
+metrics, DNS changes) and the DR drill checklist.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
