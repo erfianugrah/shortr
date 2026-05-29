@@ -1,0 +1,31 @@
+---
+import "@/styles/global.css";
+
+interface Props {
+  title?: string;
+}
+const { title = "shortr" } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <header class="border-b border-border px-3 py-2 flex items-center justify-between">
+      <a href="/" class="font-mono text-sm font-semibold">shortr</a>
+      <nav class="flex gap-3 text-xs">
+        <a href="/" class="hover:underline">links</a>
+        <a href="/login" class="hover:underline">token</a>
+      </nav>
+    </header>
+    <main class="px-3 py-3">
+      <slot />
+    </main>
+  </body>
+</html>

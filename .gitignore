@@ -1,0 +1,38 @@
+# Go build artifacts
+bin/
+*.exe
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# SQLite local dev
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Node / web
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+web/.astro/
+web/.cache/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Direnv
+.envrc
+
+# pi / claude session artifacts
+.aider*
