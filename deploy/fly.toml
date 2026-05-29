@@ -5,11 +5,16 @@
 #
 # Manual one-time setup:
 #   flyctl apps create shortr-erfi
-#   flyctl storage create shortr-litestream --app shortr-erfi
 #   flyctl secrets set --app shortr-erfi ADMIN_TOKEN=$(openssl rand -hex 32)
 #   flyctl secrets set --app shortr-erfi PUBLIC_BASE_URL=https://s.erfi.io
 #   flyctl ips list --app shortr-erfi        # copy IPs into knotctl
 #   flyctl certs add s.erfi.io --app shortr-erfi
+#
+# Disaster recovery: Fly takes a daily snapshot of the volume mounted at
+# /data and retains them per snapshot_retention below. Restore with
+# `flyctl volumes snapshots list -a shortr-erfi` then
+# `flyctl volumes create --snapshot-id <id> --region fra shortr_data`.
+# For a pre-risky-change snapshot use `make backup` from the repo root.
 #
 # Public hostname is s.erfi.io; "shortr-erfi" is just the Fly app slug
 # (the unsuffixed "shortr" was already claimed globally).
@@ -33,6 +38,7 @@ primary_region = "fra"
   source      = "shortr_data"
   destination = "/data"
   initial_size = "1gb"
+  snapshot_retention = 14  # days; default is 5
 
 [http_service]
   internal_port      = 8080

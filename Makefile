@@ -107,6 +107,17 @@ deploy: ## deploy to fly using current image tag
 deploy-remote: ## let fly build remotely (no local docker required)
 	flyctl deploy --config deploy/fly.toml --remote-only
 
+.PHONY: backup
+backup: ## take a manual snapshot of the prod volume (before risky changes)
+	@vol=$$(flyctl volumes list --app shortr-erfi --json | jq -r '.[0].id'); \
+	  echo "snapshotting $$vol"; \
+	  flyctl volumes snapshots create $$vol --app shortr-erfi
+
+.PHONY: snapshots
+snapshots: ## list volume snapshots
+	@vol=$$(flyctl volumes list --app shortr-erfi --json | jq -r '.[0].id'); \
+	  flyctl volumes snapshots list $$vol --app shortr-erfi
+
 # ---------- helpers ----------
 
 .PHONY: clean

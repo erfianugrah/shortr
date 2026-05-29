@@ -1,8 +1,8 @@
 # shortr — agent guide
 
 A self-hosted URL shortener. Single Go binary on Fly.io with embedded Astro
-dashboard, plain SQLite as primary store, Litestream sidecar for backup to
-Tigris (Fly's S3-compatible object storage).
+dashboard, plain SQLite on a Fly volume. Disaster recovery via Fly's
+built-in daily volume snapshots (no sidecars, no external object storage).
 
 This file targets pi / Claude / GPT subagents working in this repo. The
 top-level skills it pairs with live in `~/.pi/agent/skills/`:
@@ -104,6 +104,24 @@ flyctl deploy --image ghcr.io/USER/shortr:<git-sha>
 
 CI does this on tag push to `v*` — see `.github/workflows/deploy.yml`.
 
+## Disaster recovery
+
+DR is Fly's built-in volume snapshots. Configured in `deploy/fly.toml`:
+```
+[[mounts]]
+  source = "shortr_data"
+  destination = "/data"
+  snapshot_retention = 14   # daily snapshots, kept 14 days
+```
+
+Ops:
+- `make backup` — manual snapshot before a risky deploy / migration.
+- `make snapshots` — list available snapshots.
+- `flyctl volumes create --snapshot-id <id> --region fra shortr_data` — restore.
+
+If you ever need point-in-time recovery to the second, or cross-region
+durability, that's when to add Litestream back. Not before.
+
 ## Things to NOT do
 
 - **Don't add CGO.** modernc.org/sqlite is the deliberate choice — pure-Go,
@@ -113,6 +131,11 @@ CI does this on tag push to `v*` — see `.github/workflows/deploy.yml`.
 - **Don't add LiteFS yet.** It's beta + dev frozen. If the user later
   measures real demand for sub-50ms global redirects, migration is mostly a
   Dockerfile change + `internal/storage/` driver swap. Not a refactor.
+- **Don't add Litestream back unless RPO matters.** Fly's daily volume
+  snapshots are the disaster-recovery story for this app. Litestream would
+  reduce RPO from 24h to ~1s, but adds a sidecar process, S3 secret
+  rotation, and ongoing monitoring. Worth it for paying customers, not for
+  a personal shortener where re-creating the last 24h of links is trivial.
 - **Don't put click recording on the redirect critical path.** Always
   fire-and-forget. The buffered channel has a fixed capacity; on overflow
   drop events with a Prometheus counter incremented — never block.
@@ -138,9 +161,8 @@ shortr/
 ├── web/                         # Astro 6 + React + Tailwind 4 + shadcn
 ├── static.go                    # //go:embed all:web/dist
 ├── deploy/
-│   ├── fly.toml
-│   ├── Dockerfile               # multi-stage: bun → go → debian + litestream
-│   └── litestream.yml
+│   ├── fly.toml                 # single Fly region, volume + daily snapshots
+│   └── Dockerfile               # multi-stage: bun → go → debian
 ├── biome.json
 ├── sqlc.yaml
 ├── Makefile

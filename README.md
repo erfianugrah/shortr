@@ -1,7 +1,8 @@
 # shortr
 
-Self-hosted URL shortener. Single Go binary on Fly.io. SQLite + Litestream
-for storage. Astro 6 dashboard embedded in the binary.
+Self-hosted URL shortener. Single Go binary on Fly.io. Plain SQLite on a
+Fly volume with daily snapshot retention. Astro 6 dashboard embedded in
+the binary.
 
 ```
 GET https://s.example.com/abc       → 302 to https://news.ycombinator.com/...
@@ -26,7 +27,7 @@ GET https://s.example.com/          → admin dashboard (bearer token required)
 | Storage | SQLite via modernc.org/sqlite (pure Go, no CGO) |
 | Migrations | goose, SQL files embedded via `//go:embed` |
 | Queries | sqlc-generated, type-safe |
-| Backup | Litestream sidecar → Tigris (Fly's S3) |
+| Backup | Fly volume daily snapshots (14-day retention) |
 | Dashboard | Astro 6 + React (islands) + Tailwind 4 + shadcn/ui + zod 4 + tanstack-form |
 | Lint/format | biome (web), go vet + staticcheck (Go) |
 | Hosting | Fly.io single region, auto-stop machines |
@@ -50,29 +51,37 @@ make dev               # runs Go server on :8080 + Astro dev on :4321
 
 ## Deploy to Fly
 
-See `docs/deploy.md` (TODO; for now follow these steps):
-
 ```bash
 # one-time setup
-flyctl apps create shortr
-flyctl storage create shortr-litestream     # creates a Tigris bucket + sets BUCKET_*, AWS_* secrets
-flyctl secrets set --app shortr \
+flyctl apps create shortr-erfi
+flyctl secrets set --app shortr-erfi \
   ADMIN_TOKEN="$(openssl rand -hex 32)" \
-  PUBLIC_BASE_URL="https://s.<your-zone>"
+  PUBLIC_BASE_URL="https://s.erfi.io"
 
-# DNS — using knotctl from ~/.pi/agent/skills/knotctl/
-knotctl add s.<your-zone> A    66.241.124.X   # paste from `flyctl ips list`
-knotctl add s.<your-zone> AAAA 2a09:8280:1::Y # ditto
+# DNS — using knotctl against the user's Knot DNS server
+knotctl add s.erfi.io A    <ipv4>   # paste from `flyctl ips list -a shortr-erfi`
+knotctl add s.erfi.io AAAA <ipv6>   # ditto
 
 # cert
-flyctl certs add s.<your-zone> --app shortr
-# wait for cert to issue (~5 min), then:
-flyctl certs check s.<your-zone> --app shortr
+flyctl certs add s.erfi.io --app shortr-erfi
+# wait ~5 min for issuance, then:
+flyctl certs check s.erfi.io --app shortr-erfi
 
 # deploy
 git tag v0.1.0 && git push --tags    # CI deploys on tag
 # OR manual:
-flyctl deploy --remote-only --app shortr
+flyctl deploy --config deploy/fly.toml --remote-only
+```
+
+### Disaster recovery
+
+Fly takes a daily snapshot of the `/data` volume; retention is set to 14
+days in `deploy/fly.toml`. Take a manual snapshot before risky changes:
+
+```bash
+make backup        # snapshot the prod volume
+make snapshots     # list snapshots
+# restore: flyctl volumes create --snapshot-id <id> --region fra shortr_data
 ```
 
 ## Development
@@ -99,10 +108,11 @@ the redirect hot path.
   single well-placed region is fine. Multi-region adds primary election +
   fly-replay middleware + per-region volumes for ~150ms savings most users
   never notice.
-- **Plain SQLite + Litestream**, not LiteFS: Litestream is mature and
-  actively developed. LiteFS is in maintenance mode (last release Apr 2025,
-  status: beta). If global reads become a measured need, the migration is
-  a Dockerfile change.
+- **Plain SQLite + volume snapshots**, not Litestream: Fly's daily
+  snapshots are free, built-in, and recover anything you'd care about for
+  a personal shortener. Litestream would lower RPO from 24h to ~1s but
+  costs a sidecar process + S3 secrets. Add it later if RPO becomes a real
+  requirement.
 - **Pure-Go SQLite (modernc.org/sqlite)**, not CGO: simpler Dockerfile,
   faster builds on Fly, cross-compiles cleanly. Perf is fine for this load.
 - **Embedded Astro frontend**, not separate Pages app: one binary, one TLS
