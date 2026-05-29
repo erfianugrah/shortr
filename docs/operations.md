@@ -101,14 +101,15 @@ Records live on the user's Knot DNS at `knot-fly-mvp`. `knotctl` from `~/knot-fl
 ```bash
 # show current
 ~/knot-fly/knotctl ls s.erfi.io
-~/knot-fly/knotctl ls _fly-ownership.s.erfi.io TXT
+~/knot-fly/knotctl ls _acme-challenge.s.erfi.io
 
-# repoint to a new IP
-~/knot-fly/knotctl set s.erfi.io A    <new-ipv4>
-~/knot-fly/knotctl set s.erfi.io AAAA <new-ipv6>
+# repoint to a different Fly app (CNAME pattern — see AGENTS.md for why)
+~/knot-fly/knotctl set s.erfi.io CNAME <new-app>.fly.dev.
 ```
 
-If you ever migrate the Fly app (e.g. rename), bring up the new IPs first, swap DNS via `knotctl set`, then tear down the old app once propagation completes.
+**Never** use A/AAAA records for erfi.io subdomains backed by Fly apps. The CNAME is load-bearing — Fly's cert verifier can't resolve our anycast Knot, so we route validation through the `.fly.dev` zone. Full explanation in `AGENTS.md`.
+
+If you ever migrate the Fly app (e.g. rename), `knotctl set s.erfi.io CNAME <new-app>.fly.dev.` then tear down the old app once cache TTL (300s here) expires.
 
 ## DR drills
 

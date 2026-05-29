@@ -104,6 +104,24 @@ flyctl deploy --image ghcr.io/USER/shortr:<git-sha>
 
 CI does this on tag push to `v*` — see `.github/workflows/deploy.yml`.
 
+## DNS pattern — CNAME, not A/AAAA
+
+`s.erfi.io` MUST be a CNAME to `shortr-erfi.fly.dev`, NOT A+AAAA records pointing at Fly's anycast IPs. Why:
+
+- `erfi.io` is served by Knot on Fly anycast (`knot-fly-mvp`, IP `169.155.56.21`).
+- Fly's internal resolver hairpins when it tries to chase `ns1.erfi.io` (also `169.155.56.21`) — anycast loops the query back to itself.
+- Result: Fly's cert verifier sees no records for any erfi.io subdomain and the cert sits at `Awaiting configuration` forever.
+- With a CNAME, Fly follows the chain into its own `.fly.dev` zone (which it can resolve), gets A/AAAA from there, and validates via HTTP-01 instead of DNS-01.
+
+If you ever need to repoint the short URL to a different Fly app or another host:
+```bash
+~/knot-fly/knotctl set s.erfi.io CNAME <new-target>.fly.dev.
+```
+
+The `_acme-challenge.s.erfi.io` CNAME (pointing to Fly's `<id>.flydns.net`) belongs to the cert, not the site — it stays put as long as the cert is owned by the same Fly app.
+
+The permanent fix (off-Fly secondary NS via he.net so Fly's resolver always has a non-hairpinned NS to fall back to) is on the `knot-dns` skill backlog. Until that lands, every Fly app on erfi.io uses the CNAME pattern.
+
 ## Disaster recovery
 
 DR is Fly's built-in volume snapshots. Configured in `deploy/fly.toml`:
