@@ -24,6 +24,8 @@ primary_region = "fra"
 
 [build]
   dockerfile = "deploy/Dockerfile"
+  # Build context is the repo root (parent of fly.toml). The Dockerfile
+  # references the multi-stage layout starting from web/ + go module root.
 
 [env]
   PORT            = "8080"

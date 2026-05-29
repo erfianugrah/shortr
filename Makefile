@@ -101,11 +101,11 @@ image-push: image
 
 .PHONY: deploy
 deploy: ## deploy to fly using current image tag
-	flyctl deploy --config deploy/fly.toml --image $(IMAGE):$(IMAGE_TAG)
+	flyctl deploy --image $(IMAGE):$(IMAGE_TAG)
 
 .PHONY: deploy-remote
 deploy-remote: ## let fly build remotely (no local docker required)
-	flyctl deploy --config deploy/fly.toml --remote-only
+	flyctl deploy --remote-only
 
 .PHONY: backup
 backup: ## take a manual snapshot of the prod volume (before risky changes)
