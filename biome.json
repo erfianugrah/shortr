@@ -3,11 +3,12 @@
   "files": {
     "ignoreUnknown": true,
     "includes": [
-      "web/src/**/*.{ts,tsx,js,jsx,mjs,json,css}",
+      "web/src/**/*.{ts,tsx,js,jsx,mjs,json}",
       "web/*.{ts,tsx,js,mjs,json}",
       "!web/dist",
       "!web/node_modules",
-      "!web/.astro"
+      "!web/.astro",
+      "!web/src/**/*.css"
     ]
   },
   "vcs": {
@@ -34,6 +35,7 @@
       "trailingCommas": "all"
     }
   },
+
   "overrides": [
     {
       "includes": ["**/*.tsx"],

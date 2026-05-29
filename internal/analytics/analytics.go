@@ -30,11 +30,18 @@ type Click struct {
 	FlyRegion string
 }
 
+// DayBucket is one row of the per-day click aggregation for sparklines.
+type DayBucket struct {
+	DayStart time.Time
+	Hits     int64
+}
+
 // Repo is the storage dependency.
 type Repo interface {
 	InsertClick(ctx context.Context, c Click) error
 	ListClicksForSlug(ctx context.Context, slug string, cursor time.Time, limit int) ([]Click, error)
 	CountClicksForSlug(ctx context.Context, slug string) (int64, error)
+	ClicksByDay(ctx context.Context, slug string, since time.Time) ([]DayBucket, error)
 }
 
 // Recorder is the public surface used by api/redirect.
@@ -48,6 +55,7 @@ type Service interface {
 	Recorder
 	List(ctx context.Context, slug string, cursor time.Time, limit int) ([]Click, error)
 	Count(ctx context.Context, slug string) (int64, error)
+	ByDay(ctx context.Context, slug string, since time.Time) ([]DayBucket, error)
 }
 
 // DefaultService is the production Service. It owns a buffered channel and
@@ -155,4 +163,9 @@ func (s *DefaultService) List(ctx context.Context, slug string, cursor time.Time
 // Count returns the total click count for a slug.
 func (s *DefaultService) Count(ctx context.Context, slug string) (int64, error) {
 	return s.repo.CountClicksForSlug(ctx, slug)
+}
+
+// ByDay returns per-day click aggregation since `since`.
+func (s *DefaultService) ByDay(ctx context.Context, slug string, since time.Time) ([]DayBucket, error) {
+	return s.repo.ClicksByDay(ctx, slug, since)
 }

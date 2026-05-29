@@ -196,16 +196,37 @@ func (s *Server) handleListClicks(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil && n > 0 && n <= 365 {
+			days = n
+		}
+	}
+
 	events, err := s.clicks.List(r.Context(), slug, cursor, limit)
 	if err != nil {
 		writeProblem(w, r, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	count, _ := s.clicks.Count(r.Context(), slug)
+
+	since := time.Now().AddDate(0, 0, -days)
+	buckets, _ := s.clicks.ByDay(r.Context(), slug, since)
+
+	dtoBuckets := make([]map[string]any, 0, len(buckets))
+	for _, b := range buckets {
+		dtoBuckets = append(dtoBuckets, map[string]any{
+			"day":  b.DayStart.UTC().Format("2006-01-02"),
+			"hits": b.Hits,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"slug":   slug,
-		"count":  count,
-		"events": events,
+		"slug":     slug,
+		"count":    count,
+		"events":   events,
+		"by_day":   dtoBuckets,
+		"since":    since.UTC().Format(time.RFC3339),
 	})
 }
 

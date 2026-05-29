@@ -24,13 +24,15 @@ export const listLinksResponseSchema = z.object({
 });
 export type ListLinksResponse = z.infer<typeof listLinksResponseSchema>;
 
+const slugRule = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]*$/, "letters, digits, _ and - only")
+  .max(64)
+  .optional()
+  .default("");
+
 export const createLinkRequestSchema = z.object({
-  slug: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]*$/, "letters, digits, _ and - only")
-    .max(64)
-    .optional()
-    .default(""),
+  slug: slugRule,
   target_url: z
     .url()
     .refine((u) => u.startsWith("http://") || u.startsWith("https://"), "must be http(s)://"),
@@ -40,6 +42,7 @@ export const createLinkRequestSchema = z.object({
   note: z.string().max(280).optional().default(""),
 });
 export type CreateLinkRequest = z.infer<typeof createLinkRequestSchema>;
+export type CreateLinkInput = z.input<typeof createLinkRequestSchema>;
 
 export const updateLinkRequestSchema = z.object({
   target_url: z.url().optional(),
@@ -52,6 +55,9 @@ export const updateLinkRequestSchema = z.object({
 });
 export type UpdateLinkRequest = z.infer<typeof updateLinkRequestSchema>;
 
+// Click events — note that the Go struct field names are PascalCase, which
+// flows through the JSON encoder unchanged unless we add tags. The actual
+// shape is documented here even though the field names are unusual.
 export const clickEventSchema = z.object({
   Slug: z.string(),
   TS: z.iso.datetime(),
@@ -63,8 +69,17 @@ export const clickEventSchema = z.object({
 });
 export type ClickEvent = z.infer<typeof clickEventSchema>;
 
+export const dayBucketSchema = z.object({
+  day: z.string(), // "YYYY-MM-DD"
+  hits: z.number().int().nonnegative(),
+});
+export type DayBucket = z.infer<typeof dayBucketSchema>;
+
 export const listClicksResponseSchema = z.object({
   slug: z.string(),
   count: z.number(),
   events: z.array(clickEventSchema),
+  by_day: z.array(dayBucketSchema),
+  since: z.iso.datetime(),
 });
+export type ListClicksResponse = z.infer<typeof listClicksResponseSchema>;

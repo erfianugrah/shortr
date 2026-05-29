@@ -31,6 +31,9 @@ func (f *fakeRepo) ListClicksForSlug(context.Context, string, time.Time, int) ([
 func (f *fakeRepo) CountClicksForSlug(context.Context, string) (int64, error) {
 	return 0, nil
 }
+func (f *fakeRepo) ClicksByDay(context.Context, string, time.Time) ([]DayBucket, error) {
+	return nil, nil
+}
 
 // fakeShortener satisfies shortener.Service for the click-count call.
 type fakeShortener struct{ inc atomic.Int64 }

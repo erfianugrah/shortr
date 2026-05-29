@@ -8,38 +8,37 @@ import (
 	"time"
 
 	"github.com/erfianugrah/shortr/internal/shortener"
+	"github.com/erfianugrah/shortr/internal/storage/sqlitegen"
 	"modernc.org/sqlite"
 )
 
 // LinksRepo is the shortener.Repo implementation backed by SQLite.
 //
-// Hand-written until sqlc generation is wired up. Once `make sqlc` runs,
-// this can be replaced with thin adapters around internal/storage/sqlitegen.
+// The actual SQL lives in internal/storage/queries/links.sql and is compiled
+// to type-safe Go via sqlc. This file is the translation layer between the
+// generated sqlitegen.Link type (column-shaped) and the shortener.Link value
+// type (domain-shaped), plus sentinel-error mapping.
 type LinksRepo struct {
-	db *sql.DB
+	q *sqlitegen.Queries
 }
 
 // NewLinksRepo constructs a LinksRepo.
 func NewLinksRepo(db *sql.DB) *LinksRepo {
-	return &LinksRepo{db: db}
+	return &LinksRepo{q: sqlitegen.New(db)}
 }
 
 // InsertLink inserts a new link. Returns shortener.ErrSlugTaken on PK clash.
 func (r *LinksRepo) InsertLink(ctx context.Context, l shortener.Link) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO links (slug, target_url, created_at, expires_at, password_hash, max_clicks, click_count, note, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		l.Slug,
-		l.TargetURL,
-		l.CreatedAt.Unix(),
-		nullableUnix(l.ExpiresAt),
-		nullableString(l.PasswordHash),
-		nullableInt64(l.MaxClicks),
-		l.ClickCount,
-		l.Note,
-		l.CreatedBy,
-	)
+	err := r.q.InsertLink(ctx, sqlitegen.InsertLinkParams{
+		Slug:         l.Slug,
+		TargetUrl:    l.TargetURL,
+		CreatedAt:    l.CreatedAt.Unix(),
+		ExpiresAt:    timeToUnixPtr(l.ExpiresAt),
+		PasswordHash: l.PasswordHash,
+		MaxClicks:    l.MaxClicks,
+		Note:         l.Note,
+		CreatedBy:    l.CreatedBy,
+	})
 	if isUniqueViolation(err) {
 		return shortener.ErrSlugTaken
 	}
@@ -51,18 +50,24 @@ func (r *LinksRepo) InsertLink(ctx context.Context, l shortener.Link) error {
 
 // GetLink returns the full row regardless of expiry/exhaustion.
 func (r *LinksRepo) GetLink(ctx context.Context, slug string) (shortener.Link, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT slug, target_url, created_at, expires_at, password_hash, max_clicks, click_count, note, created_by
-		FROM   links WHERE slug = ? LIMIT 1
-	`, slug)
-	return scanLink(row)
+	row, err := r.q.GetLink(ctx, slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		return shortener.Link{}, shortener.ErrNotFound
+	}
+	if err != nil {
+		return shortener.Link{}, fmt.Errorf("get link: %w", err)
+	}
+	return rowToLink(row), nil
 }
 
 // GetActiveLink — hot path. Returns ErrNotFound if missing, ErrExpired /
 // ErrExhausted if the row exists but isn't usable.
+//
+// We don't use the sqlc-generated `GetActiveLink` (which combines the active
+// check into the WHERE clause) because we want specific sentinel errors for
+// the expired/exhausted cases, not a generic "no row found". Cost is one
+// row scanned that might be ignored; negligible at this scale.
 func (r *LinksRepo) GetActiveLink(ctx context.Context, slug string, now time.Time) (shortener.Link, error) {
-	// Fetch the row, then evaluate state in Go — gives us specific sentinel errors
-	// instead of a generic "not found" when the row is just expired.
 	link, err := r.GetLink(ctx, slug)
 	if err != nil {
 		return shortener.Link{}, err
@@ -75,150 +80,91 @@ func (r *LinksRepo) GetActiveLink(ctx context.Context, slug string, now time.Tim
 
 // ListLinks paginates by created_at descending; cursor is exclusive.
 func (r *LinksRepo) ListLinks(ctx context.Context, cursor time.Time, limit int) ([]shortener.Link, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT slug, target_url, created_at, expires_at, password_hash, max_clicks, click_count, note, created_by
-		FROM   links
-		WHERE  created_at < ?
-		ORDER  BY created_at DESC
-		LIMIT  ?
-	`, cursor.Unix(), limit)
+	rows, err := r.q.ListLinks(ctx, sqlitegen.ListLinksParams{
+		CreatedAt: cursor.Unix(),
+		Limit:     int64(limit),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list links: %w", err)
 	}
-	defer rows.Close()
-
-	var out []shortener.Link
-	for rows.Next() {
-		l, err := scanLinkRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	out := make([]shortener.Link, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, rowToLink(row))
 	}
 	return out, nil
 }
 
 // UpdateLink rewrites mutable fields (slug + created_at stay).
 func (r *LinksRepo) UpdateLink(ctx context.Context, slug string, l shortener.Link) error {
-	res, err := r.db.ExecContext(ctx, `
-		UPDATE links
-		SET    target_url = ?, expires_at = ?, password_hash = ?, max_clicks = ?, note = ?
-		WHERE  slug = ?
-	`,
-		l.TargetURL,
-		nullableUnix(l.ExpiresAt),
-		nullableString(l.PasswordHash),
-		nullableInt64(l.MaxClicks),
-		l.Note,
-		slug,
-	)
-	if err != nil {
-		return fmt.Errorf("update link: %w", err)
+	// Existence check first so we can return ErrNotFound on missing rows
+	// (sqlc's UpdateLink with :exec swallows RowsAffected).
+	if _, err := r.q.GetLink(ctx, slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return shortener.ErrNotFound
+		}
+		return fmt.Errorf("update link (pre-check): %w", err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return shortener.ErrNotFound
+	if err := r.q.UpdateLink(ctx, sqlitegen.UpdateLinkParams{
+		TargetUrl:    l.TargetURL,
+		ExpiresAt:    timeToUnixPtr(l.ExpiresAt),
+		PasswordHash: l.PasswordHash,
+		MaxClicks:    l.MaxClicks,
+		Note:         l.Note,
+		Slug:         slug,
+	}); err != nil {
+		return fmt.Errorf("update link: %w", err)
 	}
 	return nil
 }
 
 // DeleteLink removes a row. ErrNotFound if missing.
 func (r *LinksRepo) DeleteLink(ctx context.Context, slug string) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM links WHERE slug = ?`, slug)
-	if err != nil {
-		return fmt.Errorf("delete link: %w", err)
+	if _, err := r.q.GetLink(ctx, slug); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return shortener.ErrNotFound
+		}
+		return fmt.Errorf("delete link (pre-check): %w", err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return shortener.ErrNotFound
+	if err := r.q.DeleteLink(ctx, slug); err != nil {
+		return fmt.Errorf("delete link: %w", err)
 	}
 	return nil
 }
 
 // IncrementClickCount bumps the cached counter atomically.
 func (r *LinksRepo) IncrementClickCount(ctx context.Context, slug string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE links SET click_count = click_count + 1 WHERE slug = ?`, slug)
-	if err != nil {
+	if err := r.q.IncrementClickCount(ctx, slug); err != nil {
 		return fmt.Errorf("incr click_count: %w", err)
 	}
 	return nil
 }
 
-// --- scan helpers ---
+// --- type translation ---
 
-type rowScanner interface {
-	Scan(dest ...any) error
+func rowToLink(row sqlitegen.Link) shortener.Link {
+	out := shortener.Link{
+		Slug:         row.Slug,
+		TargetURL:    row.TargetUrl,
+		CreatedAt:    time.Unix(row.CreatedAt, 0).UTC(),
+		PasswordHash: row.PasswordHash,
+		MaxClicks:    row.MaxClicks,
+		ClickCount:   row.ClickCount,
+		Note:         row.Note,
+		CreatedBy:    row.CreatedBy,
+	}
+	if row.ExpiresAt != nil {
+		t := time.Unix(*row.ExpiresAt, 0).UTC()
+		out.ExpiresAt = &t
+	}
+	return out
 }
 
-func scanLink(row rowScanner) (shortener.Link, error) {
-	return scanLinkRow(row)
-}
-
-func scanLinkRow(row rowScanner) (shortener.Link, error) {
-	var (
-		l            shortener.Link
-		createdUnix  int64
-		expiresUnix  sql.NullInt64
-		passwordHash sql.NullString
-		maxClicks    sql.NullInt64
-	)
-	err := row.Scan(
-		&l.Slug,
-		&l.TargetURL,
-		&createdUnix,
-		&expiresUnix,
-		&passwordHash,
-		&maxClicks,
-		&l.ClickCount,
-		&l.Note,
-		&l.CreatedBy,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return shortener.Link{}, shortener.ErrNotFound
-		}
-		return shortener.Link{}, fmt.Errorf("scan link: %w", err)
-	}
-	l.CreatedAt = time.Unix(createdUnix, 0).UTC()
-	if expiresUnix.Valid {
-		t := time.Unix(expiresUnix.Int64, 0).UTC()
-		l.ExpiresAt = &t
-	}
-	if passwordHash.Valid {
-		s := passwordHash.String
-		l.PasswordHash = &s
-	}
-	if maxClicks.Valid {
-		v := maxClicks.Int64
-		l.MaxClicks = &v
-	}
-	return l, nil
-}
-
-// --- nullable helpers ---
-
-func nullableUnix(t *time.Time) sql.NullInt64 {
+func timeToUnixPtr(t *time.Time) *int64 {
 	if t == nil {
-		return sql.NullInt64{}
+		return nil
 	}
-	return sql.NullInt64{Int64: t.Unix(), Valid: true}
-}
-
-func nullableString(s *string) sql.NullString {
-	if s == nil {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: *s, Valid: true}
-}
-
-func nullableInt64(v *int64) sql.NullInt64 {
-	if v == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: *v, Valid: true}
+	v := t.Unix()
+	return &v
 }
 
 // isUniqueViolation detects modernc.org/sqlite UNIQUE constraint failures.
